@@ -10,12 +10,19 @@ interface Message {
   id: number;
 }
 
+interface WebSocketMessage {
+  type: string;
+  data: Message;
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>('');
   const [username, setUsername] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [wsConnected, setWsConnected] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -29,7 +36,61 @@ function App() {
     // Set a default username
     setUsername(`User_${Math.floor(Math.random() * 1000)}`);
     fetchMessages();
+    
+    // Set up WebSocket connection for real-time updates
+    setupWebSocket();
+    
+    // Clean up WebSocket on component unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, []);
+
+  const setupWebSocket = () => {
+    // Determine the WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.hostname}:5000/ws`;
+    
+    try {
+      wsRef.current = new WebSocket(wsUrl);
+      
+      wsRef.current.onopen = () => {
+        console.log('WebSocket connected');
+        setWsConnected(true);
+      };
+      
+      wsRef.current.onmessage = (event) => {
+        const message: WebSocketMessage = JSON.parse(event.data);
+        if (message.type === 'message') {
+          setMessages(prevMessages => {
+            // Check if message already exists to avoid duplicates
+            const exists = prevMessages.some(m => m.id === message.data.id);
+            if (!exists) {
+              return [...prevMessages, message.data];
+            }
+            return prevMessages;
+          });
+        }
+      };
+      
+      wsRef.current.onclose = () => {
+        console.log('WebSocket disconnected');
+        setWsConnected(false);
+        // Attempt to reconnect after 3 seconds
+        setTimeout(setupWebSocket, 3000);
+      };
+      
+      wsRef.current.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setWsConnected(false);
+      };
+    } catch (error) {
+      console.error('Error creating WebSocket connection:', error);
+      setWsConnected(false);
+    }
+  };
 
   const fetchMessages = async () => {
     try {
@@ -55,7 +116,7 @@ function App() {
     try {
       const response = await axios.post<{ success: boolean, message: Message, total_messages: number }>('/api/messages', messageData);
       if (response.data.success) {
-        setMessages([...messages, response.data.message]);
+        // Message will be added via WebSocket, so we don't need to manually add it here
         setNewMessage('');
       }
     } catch (error) {
@@ -76,8 +137,8 @@ function App() {
         </div>
         <h2>Group Chat</h2>
         <div className="connection-status">
-          <span className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}></span>
-          {isConnected ? 'Connected' : 'Disconnected'}
+          <span className={`status-indicator ${wsConnected ? 'connected' : 'disconnected'}`}></span>
+          {wsConnected ? 'Connected' : 'Connecting...'}
         </div>
       </div>
       
